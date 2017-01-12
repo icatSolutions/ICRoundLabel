@@ -1,0 +1,190 @@
+//
+//  ViewController.swift
+//  GMRoundLabel
+//
+//  Created by George Michalopoulos on 12/1/17.
+//  Copyright © 2017 iCat Solutions Ltd. All rights reserved.
+//
+
+import UIKit
+import CoreText
+
+@IBDesignable
+open class ICRoundLabel: UILabel {
+    
+    // Switch on/off text rounding, is on by default
+    @IBInspectable open dynamic var isRounded:Bool = true {
+        didSet{
+            setNeedsDisplay()
+        }
+    }
+    
+    // Specify text alignment
+    @available(*, unavailable, message: "This property is reserved for Interface Builder. Use 'roundedTextAlignment' instead.")
+    @IBInspectable open dynamic var alignment:UInt8 {
+        set{
+            self.roundedTextAlignment = CTTextAlignment(rawValue: newValue)!
+            setNeedsDisplay()
+        }
+        get{
+            return roundedTextAlignment.rawValue
+        }
+    }
+    
+    // Font scale
+    @IBInspectable open dynamic var fillTextInCenter:Bool = true {
+        didSet{
+            setNeedsDisplay()
+        }
+    }
+    
+    // Font step
+    @available(*, unavailable, message: "This property is reserved for Interface Builder. Use 'internalFontStep' instead.")
+    @IBInspectable open dynamic var fontStep:CGFloat {
+        set(newValue) {
+            internalFontStep = max(newValue, 0.1)
+        }
+        get {
+            return internalFontStep
+        }
+    }
+    
+    open var roundedTextAlignment:CTTextAlignment = .center
+    open var internalFontStep:CGFloat = 1
+    
+    override open func drawText(in rect: CGRect) {
+        
+        // Check if custom text draw is needed
+        if !isRounded {
+            super.drawText(in: rect)
+            return
+        }
+        
+        // Check if text exists
+        guard let text = self.text else {
+            return
+        }
+        
+        if text == "" {
+            return
+        }
+        
+        // Get graphics context
+        guard let context = UIGraphicsGetCurrentContext() else {
+            return
+        }
+        
+        //MARK: Create attributed string
+        var stringRange = NSMakeRange(0, text.characters.count)
+        let attrString = CFAttributedStringCreate(kCFAllocatorDefault, text as CFString!, attributedText?.attributes(at: 0, effectiveRange: &stringRange) as CFDictionary!)
+        let attributedString = CFAttributedStringCreateMutableCopy(kCFAllocatorDefault, CFIndex.max, attrString)!
+        let stringLength = CFAttributedStringGetLength(attributedString)
+        
+        // Set a paragraph style
+        let cfStringRange = CFRangeMake(0, stringLength)
+        let settings = [CTParagraphStyleSetting(spec: .alignment, valueSize: MemoryLayout.size(ofValue: roundedTextAlignment), value: &roundedTextAlignment)]
+        let paragraphStyle = CTParagraphStyleCreate(settings, 1)
+        
+        CFAttributedStringSetAttribute(attributedString, cfStringRange, kCTParagraphStyleAttributeName, paragraphStyle)
+        
+        // Make custom transitions with context
+        context.translateBy(x: 0.0, y: frame.size.height)
+        context.scaleBy(x: 1.0, y: -1.0)
+        
+        // New drawing rect with insets
+        let drawingRect = CGRect(origin: CGPoint(x: 0, y: 0), size: CGSize(width: rect.size.width, height: rect.size.height))
+        
+        // Align text in center
+        var boundingBox = text.boundingRect(with: drawingRect.size, options: NSStringDrawingOptions.usesLineFragmentOrigin, attributes: [NSFontAttributeName: font], context: nil)
+        
+        //MARK: Create elliptical path
+        var path = CGPath(roundedRect: drawingRect, cornerWidth: drawingRect.width/2, cornerHeight: drawingRect.height/2, transform: nil)
+        
+        //MARK: Frame and range calculation nested function
+        func getTextFrameRange() -> (CTFrame, CFRange) {
+            let textFrame = CTFramesetterCreateFrame(CTFramesetterCreateWithAttributedString(attributedString), cfStringRange, path, nil)
+            let rangeThatFits = CTFrameGetVisibleStringRange(textFrame)
+            return (textFrame, rangeThatFits)
+        }
+        
+        var textFrame:CTFrame
+        var rangeThatFits:CFRange
+        
+        //MARK: Scaling font size if needed
+        
+        if fillTextInCenter {
+            
+            var fontSize = font.pointSize
+            var estimatedFont = font.withSize(fontSize)
+            
+            // Pin text in center of initial rect
+            var boxHeight = ceil(boundingBox.height)
+            
+            func updateBoundingBox() {
+                boundingBox.origin = CGPoint(x: ceil((drawingRect.size.height - boxHeight)/2), y: ceil((drawingRect.size.height - boxHeight)/2))
+                boundingBox.size = CGSize(width: boxHeight, height: boxHeight)
+            }
+            
+            path = CGPath(roundedRect: boundingBox, cornerWidth: boundingBox.width/2, cornerHeight: boundingBox.height/2, transform: nil)
+            
+            (_, rangeThatFits) = getTextFrameRange()
+            
+            updateBoundingBox()
+            
+            // Fit text in center
+            while cfStringRange.length != rangeThatFits.length {
+                
+                // Increase size of bounding box size if needed
+                // or decrease font size
+                if boundingBox.width < drawingRect.width {
+                    
+                    boxHeight += 1
+                    
+                    //Update bounding box accoringly to new box size
+                    updateBoundingBox()
+                    
+                    path = CGPath(roundedRect: boundingBox, cornerWidth: boundingBox.width/2, cornerHeight: boundingBox.height/2, transform: nil)
+                    
+                    (_, rangeThatFits) = getTextFrameRange()
+                    
+                    continue
+                } else {
+                    
+                    CFAttributedStringSetAttribute(attributedString, cfStringRange, kCTFontAttributeName, estimatedFont)
+                    
+                    (_, rangeThatFits) = getTextFrameRange()
+                    
+                    // Increase or decrease font size
+                    fontSize += cfStringRange.length < rangeThatFits.length ? internalFontStep : -internalFontStep
+                    estimatedFont = font.withSize(fontSize)
+                }
+            }
+        }
+        
+        //MARK: Draw the text frame in the view's graphics context
+        (textFrame, _) = getTextFrameRange()
+        CTFrameDraw(textFrame, context)
+        
+    }
+    
+    @IBInspectable var borderColor: UIColor = UIColor.white {
+        didSet {
+            layer.borderColor = borderColor.cgColor
+        }
+    }
+    
+    @IBInspectable var borderWidth: CGFloat = 1.0 {
+        didSet {
+            layer.borderWidth = borderWidth
+        }
+    }
+    
+    override open func layoutSubviews() {
+        super.layoutSubviews()
+        layer.cornerRadius = 0.5 * bounds.size.width
+        clipsToBounds = true
+        
+        
+    }
+    
+}
